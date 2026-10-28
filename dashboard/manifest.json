@@ -1,0 +1,9 @@
+{
+  "name": "search-sources",
+  "label": "Search sources",
+  "version": "0.2.0",
+  "description": "Turn source records and Desktop heartbeat for the Sources panel.",
+  "tab": { "hidden": true },
+  "entry": "index.js",
+  "api": "plugin_api.py"
+}
