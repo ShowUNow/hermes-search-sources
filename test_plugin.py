@@ -1086,10 +1086,10 @@ class TestDesktopHalf:
         assert "  en: {" in bundle and "  zh: {" in bundle and "  'zh-hant': {" in bundle
         assert "ctx.i18n?.register?.(MESSAGES)" in JS and "usePluginI18n" in JS
 
-    def test_favicon_lookup_asks_the_app_first_and_is_user_controllable(self):
-        assert "window.hermesDesktop" in JS and "resolveFavicon" in JS
+    def test_favicon_lookup_uses_only_public_sdk_and_is_user_controllable(self):
+        assert "window.hermesDesktop" not in JS and "resolveFavicon" not in JS
         for needle in ("google.com/s2/favicons", "icons.duckduckgo.com", "/favicon.ico", "referrerPolicy: 'no-referrer'",
-                       "ICON_MODES = ['all', 'app', 'off']", "registerSettingsPage"):
+                       "ICON_MODES = ['all', 'off']", "registerSettingsPage"):
             assert needle in JS, needle
         # nothing but the domain is put in a third-party URL
         for line in (l for l in JS.splitlines() if "google.com" in l or "duckduckgo.com" in l):

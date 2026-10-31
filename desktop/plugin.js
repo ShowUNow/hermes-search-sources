@@ -27,7 +27,7 @@ const PING_MIN_GAP_MS = 20 * 1000
 const PING_RETRY_MS = [3000, 10000, 30000]
 const REST_TIMEOUT_MS = 10000
 const RECORD_ID = /^ss-[0-9a-f]{12}$/
-const ICON_MODES = ['all', 'app', 'off']
+const ICON_MODES = ['all', 'off']
 
 // `$records`: id -> record. `$order`: ids, newest first. `$focus`: which turn's sources the pane shows.
 // `$loading`: id -> 'loading' | 'missing' | 'error' for records fetched on demand.
@@ -36,7 +36,7 @@ const $order = atom([])
 const $focus = atom({ id: null, at: 0 })
 const $loading = atom({})
 const $never = atom(false)
-const $iconMode = atom('all') // 'all' | 'app' | 'off' — see README › Disclosure
+const $iconMode = atom('all') // 'all' | 'off' — see README › Disclosure
 
 const runtime = { ctx: null }
 
@@ -78,9 +78,8 @@ const MESSAGES = {
       icons: {
         title: 'Site icons',
         description:
-          'Show each page’s own icon next to its domain. “All” asks the app to read the site’s icon and, when that finds none, Google’s and DuckDuckGo’s icon services (they learn the domain) and then the site itself. “App only” skips those services; “Off” shows letters and contacts no one.',
+          'Show each page’s own icon next to its domain. “All” asks Google’s and DuckDuckGo’s icon services (they learn the domain) and then the site itself; “Off” shows letters and contacts no one.',
         all: 'All',
-        app: 'App only',
         off: 'Off'
       }
     }
@@ -115,9 +114,8 @@ const MESSAGES = {
       icons: {
         title: '站点图标',
         description:
-          '在域名旁显示页面自己的图标。“全部”先让应用读取站点图标，读不到时再依次尝试 Google、DuckDuckGo 的图标服务（它们会得知该域名）和站点自身；“仅应用”不使用这些服务；“关闭”只显示首字母，不联系任何一方。',
+          '在域名旁显示页面自己的图标。“全部”依次尝试 Google、DuckDuckGo 的图标服务（它们会得知该域名）和站点自身；“关闭”只显示首字母，不联系任何一方。',
         all: '全部',
-        app: '仅应用',
         off: '关闭'
       }
     }
@@ -152,9 +150,8 @@ const MESSAGES = {
       icons: {
         title: '站點圖示',
         description:
-          '在網域旁顯示頁面自己的圖示。「全部」先讓應用讀取站點圖示，讀不到時再依序嘗試 Google、DuckDuckGo 的圖示服務（它們會得知該網域）與站點本身；「僅應用」不使用這些服務；「關閉」只顯示首字母，不聯絡任何一方。',
+          '在網域旁顯示頁面自己的圖示。「全部」依序嘗試 Google、DuckDuckGo 的圖示服務（它們會得知該網域）與站點本身；「關閉」只顯示首字母，不聯絡任何一方。',
         all: '全部',
-        app: '僅應用',
         off: '關閉'
       }
     }
@@ -341,9 +338,6 @@ const paneVisible = () => (typeof host.paneVisibility === 'function' ? host.pane
 
 // --- UI -----------------------------------------------------------------------------------------------
 
-const faviconCache = new Map() // host -> data URL from the app's resolver, or '' when it found none
-const faviconPending = new Map()
-
 // A bare DNS name or IPv4 address: the only thing allowed into an icon-service or /favicon.ico URL.
 const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 
@@ -363,18 +357,7 @@ function iconHost(domain, url) {
   return host.length <= 253 && HOST_RE.test(host) ? host : ''
 }
 
-const appResolver = () => (typeof window !== 'undefined' ? window.hermesDesktop?.resolveFavicon : undefined)
-
-function siteOrigin(url, hostName) {
-  try {
-    return `${new URL(url).origin}/`
-  } catch {
-    return `https://${hostName}/`
-  }
-}
-
-// Third-party tiers, only reached when the app's own resolver found nothing (or does not exist) and the user
-// left Site icons on "All". The domain is the only thing they are told.
+// Icon tiers, only reached when the user left Site icons on "All". The domain is the only thing they are told.
 function thirdPartyIcons(hostName) {
   const enc = encodeURIComponent(hostName)
 
@@ -385,78 +368,18 @@ function thirdPartyIcons(hostName) {
   ]
 }
 
-function resolveSiteIcon(hostName, url) {
-  const resolve = appResolver()
-
-  if (typeof resolve !== 'function') {
-    return Promise.resolve('')
-  }
-
-  if (!faviconPending.has(hostName)) {
-    faviconPending.set(
-      hostName,
-      Promise.resolve()
-        .then(() => resolve(siteOrigin(url, hostName)))
-        .then(found => (typeof found === 'string' ? found.trim() : ''))
-        .catch(() => '')
-        .then(found => {
-          faviconCache.set(hostName, found)
-          faviconPending.delete(hostName)
-
-          return found
-        })
-    )
-  }
-
-  return faviconPending.get(hostName)
-}
-
-// Letter badge first, then the best real icon that settings allow: the app's resolver (reads the site's own
-// markup and well-known paths), then — "All" only — Google / DuckDuckGo icon services and the site's
-// /favicon.ico; a failed image steps to the next tier, and the letter stays if every tier fails.
+// When Site icons is "All", try Google / DuckDuckGo icon services and the site's /favicon.ico in order;
+// a failed image steps to the next tier, and the letter badge shows when "Off" or every tier fails.
 function Avatar({ domain, url }) {
   const mode = useValue($iconMode)
   const hostName = iconHost(domain, url)
-  const asks = mode !== 'off' && hostName && typeof appResolver() === 'function'
-  const [resolved, setResolved] = useState(() => (asks ? faviconCache.get(hostName) : ''))
   const [failedStep, setFailedStep] = useState(0)
 
   useEffect(() => {
     setFailedStep(0)
+  }, [hostName, mode, url])
 
-    if (!asks) {
-      setResolved('')
-
-      return
-    }
-
-    const cached = faviconCache.get(hostName)
-
-    if (cached !== undefined) {
-      setResolved(cached)
-
-      return
-    }
-
-    let live = true
-
-    setResolved(undefined)
-    void resolveSiteIcon(hostName, url).then(found => {
-      if (live) {
-        setResolved(found)
-      }
-    })
-
-    return () => {
-      live = false
-    }
-  }, [asks, hostName, mode, url])
-
-  const waiting = asks && resolved === undefined
-  const chain =
-    mode === 'off' || !hostName || waiting
-      ? []
-      : [resolved || '', ...(mode === 'all' ? thirdPartyIcons(hostName) : [])].filter(Boolean)
+  const chain = mode === 'all' && hostName ? thirdPartyIcons(hostName) : []
   const activeSrc = chain[failedStep] || ''
 
   if (activeSrc) {

@@ -183,11 +183,10 @@ sdk.calls.length = 0
 await act(async () => { document.querySelector('.ss-card').click() })
 assert.equal(sdk.calls.at(-1)[1], 'search-sources:sources')
 
-// 9. site icons: the app's resolver first; third parties only as a fallback; the setting is honoured -------
+// 9. site icons: Google / DuckDuckGo / site /favicon.ico fallback chain; the setting is honoured ---------------
 const avatarProbe = domain => ({ attrs: { id: ID, n: '5', c: '2' }, domain })
 let siteCounter = 0
-async function iconSrcs(mode, resolver) {
-  window.hermesDesktop = resolver ? { resolveFavicon: resolver } : undefined
+async function iconSrcs(mode) {
   const site = `site${++siteCounter}.example`
   const c = makeCtx({ iconMode: mode })
   plugin.register(c)
@@ -205,34 +204,17 @@ async function iconSrcs(mode, resolver) {
   c.disposers.forEach(fn => fn())
   return { seen, letter, site }
 }
-const asked = []
-const dataUrl = 'data:image/png;base64,AAAA'
-let out = await iconSrcs('all', async url => { asked.push(url); return dataUrl })
-assert.deepEqual(out.seen, [dataUrl].concat(out.seen.slice(1)), 'resolver result first')
-assert.ok(out.seen[1].includes('google.com/s2/favicons') && out.seen[2].includes('duckduckgo.com') && out.seen[3].endsWith('/favicon.ico'), 'then the fallback chain: ' + out.seen)
+let out = await iconSrcs('all')
+assert.equal(out.seen.length, 3, 'all 3 icon tiers tried')
+assert.ok(out.seen[0].includes('google.com/s2/favicons') && out.seen[1].includes('duckduckgo.com') && out.seen[2] === `https://${out.site}/favicon.ico`, 'fallback chain: ' + out.seen)
 assert.equal(out.letter, 'S', 'every tier failed: letter badge')
-assert.deepEqual(asked, [`https://${out.site}/`], 'the resolver is asked for the origin only')
-out = await iconSrcs('all', async () => dataUrl)
-out = await iconSrcs('all', async () => '')
-assert.ok(out.seen[0].includes('google.com/s2/favicons'), 'resolver found nothing: third party next')
-out = await iconSrcs('all', null)
-assert.ok(out.seen[0].includes('google.com/s2/favicons'), 'no resolver on this desktop: third party at once')
-const askedApp = []
-out = await iconSrcs('app', async url => { askedApp.push(url); return '' })
-assert.deepEqual(out.seen, [], 'app only: no third party after the resolver comes up empty')
-assert.equal(askedApp.length, 1)
-out = await iconSrcs('app', async () => dataUrl)
-assert.equal(out.seen[0], dataUrl)
-assert.equal(out.seen.length, 1, 'app only never falls through to a service')
-const askedOff = []
-out = await iconSrcs('off', async url => { askedOff.push(url); return dataUrl })
-assert.deepEqual(out.seen, [])
+out = await iconSrcs('off')
+assert.deepEqual(out.seen, [], 'off: no icon requests')
 assert.equal(out.letter, 'S', 'off: letters')
-assert.deepEqual(askedOff, [], 'off: nobody is asked')
-// a host that is not a plain DNS name / IPv4 address never reaches an icon URL or the resolver
+out = await iconSrcs('app')
+assert.ok(out.seen[0].includes('google.com/s2/favicons'), 'legacy stored app mode falls back cleanly to all')
+// a host that is not a plain DNS name / IPv4 address never reaches an icon URL
 {
-  const asked2 = []
-  window.hermesDesktop = { resolveFavicon: async u => { asked2.push(u); return dataUrl } }
   const c = makeCtx({ iconMode: 'all' })
   plugin.register(c)
   const mk = (url, domain) => ({ ...record.sources[0], url, domain, title: domain || 'untitled' })
@@ -243,12 +225,10 @@ assert.deepEqual(askedOff, [], 'off: nobody is asked')
   await mount(c.find('sources').render())
   await settle(20)
   const imgs = [...document.querySelectorAll('.ss-avatar-img')].map(i => i.getAttribute('src'))
-  assert.ok(!asked2.some(u => u.includes('::1') || u.includes('evil')), 'resolver never asked: ' + asked2)
   assert.ok(!/onerror|\.\.\/x|\[::1\]/.test(imgs.join(' ')), 'no unsafe host in any icon URL: ' + imgs)
-  assert.ok(asked2.includes('https://good.example/') && asked2.includes('https://x.example/'), 'hosts come from the page URL: ' + asked2)
+  assert.ok(imgs.some(u => u.includes('good.example')) && imgs.some(u => u.includes('x.example')), 'hosts come from the page URL: ' + imgs)
   c.disposers.forEach(fn => fn())
 }
-window.hermesDesktop = undefined
 await mount(null)
 
 // 10. settings page changes the mode and persists it ---------------------------------------------------------
